@@ -1,0 +1,21 @@
+station_id,name,lat,lon,cluster_id,role
+AWS-CHN-024,Chennai,13.0827,80.2707,CHN,center
+AWS-CHN-101,Tambaram,12.9249,80.1,CHN,neighbor
+AWS-CHN-102,Ambattur,13.1143,80.1548,CHN,neighbor
+AWS-CHN-103,Sriperumbudur,12.9675,79.943,CHN,neighbor
+AWS-DEL-011,Delhi,28.6139,77.209,DEL,center
+AWS-DEL-101,Noida,28.5355,77.391,DEL,neighbor
+AWS-DEL-102,Gurugram,28.4595,77.0266,DEL,neighbor
+AWS-DEL-103,Ghaziabad,28.6692,77.4538,DEL,neighbor
+AWS-MUM-007,Mumbai,19.076,72.8777,MUM,center
+AWS-MUM-101,Thane,19.2183,72.9781,MUM,neighbor
+AWS-MUM-102,Navi Mumbai,19.033,73.0297,MUM,neighbor
+AWS-MUM-103,Kalyan,19.2403,73.1305,MUM,neighbor
+AWS-KOL-015,Kolkata,22.5726,88.3639,KOL,center
+AWS-KOL-101,Howrah,22.5958,88.2636,KOL,neighbor
+AWS-KOL-102,Bidhannagar,22.5697,88.4171,KOL,neighbor
+AWS-KOL-103,Barrackpore,22.7645,88.3792,KOL,neighbor
+AWS-BHO-030,Bhopal,23.2599,77.4126,BHO,center
+AWS-BHO-101,Sehore,23.2032,77.0844,BHO,neighbor
+AWS-BHO-102,Vidisha,23.5251,77.8081,BHO,neighbor
+AWS-BHO-103,Raisen,23.3315,77.7899,BHO,neighbor
