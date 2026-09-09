@@ -49,6 +49,28 @@ def compute_bounds(series: pd.Series, z_thresh: float = 3.0):
     return mean, std, mean + z_thresh * std, mean - z_thresh * std
 
 
+# Hard physical ceilings that NO fault should cross, because they're
+# not just statistically unusual -- they're physically impossible.
+# Humidity is the critical one: it's a percentage, so a sensor CANNOT
+# genuinely report 173% no matter how broken it is (a real malfunctioning
+# sensor saturates/clips at its measurement limits, it doesn't exceed
+# them). Pressure gets a generous real-world floor/ceiling too. This is
+# NOT applied to inject_fail_low (which intentionally uses an even lower
+# fixed sentinel to represent total sensor failure -- a different, valid
+# fault archetype) or inject_dropout (NaN has no numeric bound to violate).
+HARD_PHYSICAL_LIMITS = {
+    "humidity_pct": (0.0, 100.0),
+    "pressure_hpa": (800.0, 1100.0),
+}
+
+
+def clip_to_physical_limits(df: pd.DataFrame, column: str, start_idx: int, end_idx: int):
+    """Clamps an injected window back within hard physical limits, if the column has any."""
+    if column in HARD_PHYSICAL_LIMITS:
+        low, high = HARD_PHYSICAL_LIMITS[column]
+        df.loc[start_idx:end_idx, column] = df.loc[start_idx:end_idx, column].clip(low, high)
+
+
 def inject_spike(df: pd.DataFrame, idx: int, column: str, rng: np.random.Generator):
     """Push a single reading far outside its z-score bounds."""
     mean, std, upper, lower = compute_bounds(df[column])
@@ -56,6 +78,7 @@ def inject_spike(df: pd.DataFrame, idx: int, column: str, rng: np.random.Generat
     # Push 4-6 std deviations out -- unambiguous, not a borderline case.
     magnitude = rng.uniform(4.0, 6.0)
     df.loc[idx, column] = mean + direction * magnitude * std
+    clip_to_physical_limits(df, column, idx, idx)
     return "spike"
 
 
@@ -104,6 +127,7 @@ def inject_drift(df: pd.DataFrame, idx: int, column: str, rng: np.random.Generat
 
     jitter = rng.normal(0, df[column].std() * 0.03, steps)
     df.loc[idx:end_idx, column] = df.loc[idx:end_idx, column].values + ramp + jitter
+    clip_to_physical_limits(df, column, idx, end_idx)
     return "drift", idx, end_idx
 
 
@@ -168,6 +192,9 @@ def inject_multivariate(df: pd.DataFrame, idx: int, column: str, rng: np.random.
     # magnitude would typically show a pressure change too.
     df.loc[idx:end_idx, "pressure_hpa"] += rng.normal(0, pressure_std * 0.1, end_idx - idx + 1)
 
+    clip_to_physical_limits(df, "humidity_pct", idx, end_idx)
+    clip_to_physical_limits(df, "pressure_hpa", idx, end_idx)
+
     return "multivariate_inconsistency", idx, end_idx
 
 
@@ -180,16 +207,11 @@ def inject_anomalies(df: pd.DataFrame, seed: int = RANDOM_SEED) -> pd.DataFrame:
     """
     rng = np.random.default_rng(seed)
     df = df.copy().reset_index(drop=True)
-
-    # Some CSV files infer whole-number sensor columns as int64, but
-    # injected faults intentionally produce fractional readings.
-    sensor_columns = ["temperature_c", "pressure_hpa", "humidity_pct"]
-    df[sensor_columns] = df[sensor_columns].astype(float)
-
     df["is_anomaly"] = False
     df["fault_type"] = None
 
-    columns = sensor_columns
+    columns = ["temperature_c", "pressure_hpa", "humidity_pct"]
+    df[columns] = df[columns].astype(float)
     n_rows = len(df)
 
     # IMPORTANT: this is a budget on total AFFECTED ROWS, not on the
