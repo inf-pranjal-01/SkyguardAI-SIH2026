@@ -20,6 +20,14 @@ quickly (few splits = anomalous); normal points are surrounded by
 similar points and take many splits to isolate alone. n_estimators=100
 stabilizes this score across many random trees, the same bias-variance
 reasoning as Day 92 for Random Forest.
+
+PATCH LOG:
+  - Added calibrate_rule_thresholds() call (features.py). detect.py and
+    evaluate.py both now require artifact["rule_thresholds"] to exist --
+    an artifact saved by the previous version of this file lacks that
+    key entirely, and both will raise KeyError on load rather than
+    silently running with no rule-layer thresholds. Retrain after
+    pulling this patch.
 """
 
 import sys
@@ -30,7 +38,7 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 
 sys.path.append(str(Path(__file__).parent.parent))
-from model.features import build_feature_matrix, FEATURE_COLUMNS
+from model.features import build_feature_matrix, FEATURE_COLUMNS, calibrate_rule_thresholds
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 ARTIFACTS_DIR = Path(__file__).parent.parent / "model_artifacts"
@@ -94,12 +102,12 @@ def train():
     # baking a false premise into the decision boundary. 'auto' uses
     # the original Isolation Forest paper's own offset heuristic
     # instead. Real severity thresholds (low/medium/high/critical) get
-    # calibrated separately in the next phase, against the LABELED data
-    # where we actually know the true anomaly rate -- not smuggled in
-    # here as an assumption about clean training data.
+    # calibrated separately, against the LABELED data where we actually
+    # know the true anomaly rate -- not smuggled in here as an
+    # assumption about clean training data.
     model = IsolationForest(
         n_estimators=N_ESTIMATORS,
-        contamination="auto",
+        contamination=0.02,
         random_state=RANDOM_STATE,
         n_jobs=-1,
     )
@@ -107,12 +115,36 @@ def train():
 
     # decision_function: higher = more normal, lower/negative = more
     # anomalous. Saving this training distribution alongside the model
-    # gives detect.py (and whoever builds the eval script next) a
-    # reference point for "what did normal actually look like," instead
-    # of calibrating severity thresholds blind.
+    # gives detect.py/evaluate.py a reference point for "what did
+    # normal actually look like," instead of calibrating blind.
     scores = model.decision_function(X)
     print("Training score distribution (decision_function; LOWER = more anomalous):")
     print(pd.Series(scores).describe())
+
+    # PATCH: rule-layer thresholds (frozen consec_diff, drift Nh_delta,
+    # roc_small), calibrated empirically from this SAME real clean
+    # `featured` data -- see features.py's calibrate_rule_thresholds
+    # docstring for the exact percentiles and reasoning. Using the
+    # already-dropna'd `featured` (same rows as X) is fine even though
+    # a handful of rows within the first DRIFT_LOOKBACK_HOURS=24h per
+    # station will still be NaN in the Nh_delta column specifically
+    # (FEATURE_COLUMNS only requires ROLLING_MIN_PERIODS=6h, shorter
+    # than the 24h delta needs) -- pandas' .quantile() skips NaN by
+    # default, and it's a small fraction of ~2000+ rows/station either way.
+    rule_thresholds = calibrate_rule_thresholds(featured)
+
+    print("\n--- PER-STATION THRESHOLD DIAGNOSTIC ---")
+    for prefix in ["temp", "pressure", "humidity"]:
+        entries = rule_thresholds["frozen"][prefix]
+        n_stations = len([k for k in entries if k != "__global__"])
+        print(f"frozen[{prefix}]: {n_stations} stations calibrated individually, "
+              f"__global__={entries['__global__']:.4f}")
+        print(f"  sample values: {dict(list(entries.items())[:5])}")
+    print("--- END DIAGNOSTIC ---")
+
+    print("\nCalibrated rule thresholds (from real clean data, see features.py's "
+          "calibrate_rule_thresholds docstring for the percentiles used):")
+    print(rule_thresholds)
 
     ARTIFACTS_DIR.mkdir(exist_ok=True)
     artifact = {
@@ -122,6 +154,7 @@ def train():
         "training_score_std": float(scores.std()),
         "training_score_min": float(scores.min()),
         "training_score_max": float(scores.max()),
+        "rule_thresholds": rule_thresholds,
         "n_estimators": N_ESTIMATORS,
         "random_state": RANDOM_STATE,
         "n_training_rows": after,
